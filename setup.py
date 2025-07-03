@@ -19,7 +19,7 @@ if __name__ == '__main__':
     include_dirs = ['csrc/']
     library_dirs = []
     nvcc_dlink = []
-    extra_link_args = []
+    extra_link_args = ['-lcudadevrt','-lcudart']
 
     # NVSHMEM flags
     if disable_nvshmem:
@@ -64,8 +64,8 @@ if __name__ == '__main__':
         'cxx': cxx_flags,
         'nvcc': nvcc_flags,
     }
-    if len(nvcc_dlink) > 0:
-        extra_compile_args['nvcc_dlink'] = nvcc_dlink
+    # if len(nvcc_dlink) > 0:
+    #     extra_compile_args['nvcc_dlink'] = nvcc_dlink
 
     # Summary
     print(f'Build summary:')
