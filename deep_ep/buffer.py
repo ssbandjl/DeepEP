@@ -54,13 +54,14 @@ class Buffer:
             explicitly_destroy: If this flag is set to True, you need to explicitly call `destroy()` to release resources;
                 otherwise, the resources will be released by the destructor.
                 Note: Releasing resources in the destructor may cause Python's exception handling process to hang.
-            comm: the mpi4py.MPI.Comm communicator to use in case the group parameter is absent.
+            comm: the `mpi4py.MPI.Comm` communicator to use in case the group parameter is absent.
         """
         check_nvlink_connections(group)
 
         # Initialize the CPP runtime
         if group is not None:
             self.rank = group.rank()
+            self.group = group
             self.group_size = group.size()
 
             def all_gather_object(obj):
@@ -69,6 +70,7 @@ class Buffer:
                 return object_list
         elif comm is not None:
             self.rank = comm.Get_rank()
+            self.group = comm
             self.group_size = comm.Get_size()
 
             def all_gather_object(obj):
@@ -400,6 +402,7 @@ class Buffer:
             x: `[num_tokens, hidden]` with `torch.bfloat16`, the tokens to send for reducing to its original ranks.
             handle: a must-set communication handle, you can obtain this from the dispatch function.
             topk_weights: `[num_tokens, num_topk]` with `torch.float`, the tokens' top-k weights for reducing to its original ranks.
+            bias: 0, 1 or 2 `[num_tokens, hidden]` with `torch.bfloat16` final bias to the output.
             config: the performance tuning config.
             previous_event: the event to wait before actually executing the kernel.
             async_finish: the current stream will not wait for the communication kernels to be finished if set.
@@ -550,7 +553,7 @@ class Buffer:
                 monitoring.
             dispatch_wait_recv_cost_stats: a cumulative time spent waiting to receive each token tensor for statistics,
                 which should have shape `[num_ranks, num_ranks]` and be typed as `torch.int64`.
-                This is useful for detecting and pre-cisely localizing slow anomalies.
+                This is useful for detecting and precisely localizing slow anomalies.
             use_fp8: whether to enable FP8 casting, with this, the received data will be a tuple of FP8 tensor and scaling factors.
             round_scale: whether round the scaling factors into power of 2.
             use_ue8m0: whether use UE8M0 as scaling factor format (available only with `round_scale=True`).

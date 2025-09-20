@@ -43,23 +43,34 @@ def calc_diff(x: torch.Tensor, y: torch.Tensor):
     return (1 - sim).item()
 
 
+def align_up(x, y):
+    return (x + y - 1) // y * y
+
+
 def per_token_cast_to_fp8(x: torch.Tensor):
-    assert x.dim() == 2 and x.size(1) % 128 == 0
+    assert x.dim() == 2
     m, n = x.shape
-    x_view = x.view(m, -1, 128)
-    x_amax = x_view.abs().float().amax(dim=2).view(m, -1).clamp(1e-4)
-    return (x_view * (448.0 / x_amax.unsqueeze(2))).to(torch.float8_e4m3fn).view(m, n), (x_amax / 448.0).view(m, -1)
+    aligned_n = align_up(n, 128)
+    x_padded = torch.nn.functional.pad(x, (0, aligned_n - n), mode='constant', value=0)
+    x_padded_view = x_padded.view(m, -1, 128)
+    x_amax = x_padded_view.abs().float().amax(dim=2).view(m, -1).clamp(1e-4)
+    return (x_padded_view * (448.0 / x_amax.unsqueeze(2))).to(torch.float8_e4m3fn).view(m, aligned_n)[:, :n].contiguous(), (x_amax / 448.0).view(m, -1)
 
 
 def per_token_cast_back(x_fp8: torch.Tensor, x_scales: torch.Tensor):
     if x_fp8.numel() == 0:
         return x_fp8.to(torch.bfloat16)
+
+    assert x_fp8.dim() == 2
+    m, n = x_fp8.shape
+    aligned_n = align_up(n, 128)
+    x_fp8_padded = torch.nn.functional.pad(x_fp8, (0, aligned_n - n), mode='constant', value=0)
     if x_scales.dtype == torch.int:
         x_scales = x_scales.view(dtype=torch.uint8).to(torch.int) << 23
         x_scales = x_scales.view(dtype=torch.float)
-    x_fp32 = x_fp8.to(torch.float32).view(x_fp8.size(0), -1, 128)
+    x_fp32_padded = x_fp8_padded.to(torch.float32).view(x_fp8.size(0), -1, 128)
     x_scales = x_scales.view(x_fp8.size(0), -1, 1)
-    return (x_fp32 * x_scales).view(x_fp8.shape).to(torch.bfloat16)
+    return (x_fp32_padded * x_scales).view(x_fp8_padded.shape).to(torch.bfloat16)[:,:n].contiguous()
 
 
 def inplace_unique(x: torch.Tensor, num_slots: int):
@@ -162,7 +173,7 @@ def bench_kineto(fn, kernel_names: Union[str, tuple], num_tests: int = 30, suppr
     # Profile
     suppress = suppress_stdout_stderr if suppress_kineto_output else empty_suppress
     with suppress():
-        schedule = torch.profiler.schedule(wait=0, warmup=1, active=1, repeat=1)
+        schedule = torch.profiler.schedule(wait=1, warmup=0, active=1, repeat=1)
         with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA], schedule=schedule) as prof:
             for i in range(2):
                 # NOTES: use a large kernel and a barrier to eliminate the unbalanced CPU launch overhead
